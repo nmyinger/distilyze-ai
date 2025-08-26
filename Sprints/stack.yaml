@@ -1,0 +1,521 @@
+core_architecture:
+  ingestion_orchestration:
+    orchestration: Dagster
+    connectors:
+      - Airbyte
+      - custom_python_gl_api
+      - bank_card_feeds
+    streaming_optional:
+      - Redpanda
+      - Kafka
+  storage:
+    object_store: MinIO
+    file_format: Parquet
+    warehouse:
+      primary: ClickHouse
+      dev: DuckDB
+      metadata: Postgres
+    feature_store:
+      tool: Feast
+      backend: Postgres
+  transform_quality:
+    modeling: dbt_core
+    data_quality: GreatExpectations
+    lineage:
+      - OpenLineage
+      - Marquez
+  serving_apps:
+    apis: FastAPI
+    inference:
+      llm: vLLM
+      tabular_primary: BentoML
+      tabular_alt: Triton
+    dashboards:
+      - Superset
+      - Metabase
+    auth: Keycloak
+    secrets: Vault
+  search_semantics:
+    vector_search:
+      primary: pgvector
+      alt: Qdrant
+    ocr_parsing:
+      invoices:
+        primary: Donut
+        alt: TrOCR
+      rich_layout_model: LayoutLMv3
+  mlops:
+    experiment_tracking: MLflow
+    registry: MLflow
+    monitoring:
+      - Evidently
+      - Arize
+    ci_cd: GitHubActions
+data_model:
+  dimensions:
+    dim_property:
+      description: Properties under management
+      columns:
+        - property_id
+        - name
+        - address
+        - region
+    dim_unit:
+      description: Units within properties
+      columns:
+        - unit_id
+        - property_id
+        - bedrooms
+        - sqft
+    dim_vendor:
+      description: Canonical vendors
+      columns:
+        - vendor_id
+        - canonical_name
+        - ein
+        - mcc
+        - risk_score
+    dim_coa:
+      description: Chart of accounts
+      columns:
+        - account_id
+        - name
+        - type
+        - capex_flag
+    dim_contract:
+      description: Vendor contracts
+      columns:
+        - contract_id
+        - vendor_id
+        - start_date
+        - end_date
+        - terms
+        - auto_renew
+    dim_party:
+      description: Counterparties in GL, vendors, tenants, banks
+      columns:
+        - party_id
+        - party_name
+        - party_type
+        - ein
+        - risk_score
+        - integration_ids # jsonb of external ids
+    dim_project:
+      description: Project metadata and cost categories
+      columns:
+        - project_id
+        - project
+        - project_cost_category
+        - active_flag
+    dim_financial_account:
+      description: Cash and bank accounts used in postings
+      columns:
+        - fin_acct_id
+        - account_number
+        - bank_account
+        - cash_account
+        - institution_name
+        - property_id
+        - active_flag
+  facts:
+    fct_transaction:
+      description: All money movements and mapped metadata
+      columns:
+        - tx_id
+        - posted_at
+        - amount
+        - currency
+        - source
+        - raw_desc
+        - merchant
+        - vendor_id
+        - property_id
+        - unit_id
+        - account_id
+        - capex_flag
+        - payment_method
+        - invoice_id
+        - model_confidence
+        - model_version
+    fct_journal_entry:
+      description: Double entry journal
+      columns:
+        - entry_id
+        - date
+        - debit_acct
+        - credit_acct
+        - amount
+        - memo
+        - source_system
+    fct_invoice:
+      description: Accounts payable invoices
+      columns:
+        - invoice_id
+        - vendor_id
+        - invoice_date
+        - due_date
+        - subtotal
+        - tax
+        - total
+        - po_id
+        - status
+    fct_budget_month:
+      description: Monthly budget by property and account
+      columns:
+        - property_id
+        - account_id
+        - month
+        - budget_amount
+    fct_forecast_month:
+      description: Monthly forecast with model provenance
+      columns:
+        - property_id
+        - account_id
+        - month
+        - forecast_amount
+        - model_version
+    fct_anomaly:
+      description: Detected anomalies and control breaches
+      columns:
+        - anomaly_id
+        - tx_id
+        - type
+        - score
+        - reason_json
+        - created_at
+    fct_feedback:
+      description: Human feedback on mappings and decisions
+      columns:
+        - label_id
+        - object_type
+        - object_id
+        - suggested_label
+        - human_label
+        - rationale
+        - user_id
+        - timestamp
+    fct_gl_line:
+      description: Source-of-truth GL at line granularity from API
+      columns:
+        - source_system
+        - txn_integration_id
+        - txn_detail_integration_id
+        - txn_id
+        - txn_detail_id
+        - posted_at # from post_date
+        - debit # numeric
+        - credit # numeric
+        - credit_debit_balance # numeric
+        - account_id
+        - account_integration_id
+        - unit_id
+        - unit_integration_id
+        - property_id
+        - property_integration_id
+        - project_id
+        - receivable_invoice_detail_id
+        - party_id
+        - party_type
+        - reference
+        - type
+        - description
+        - remarks
+        - service_from
+        - service_to
+        - created_by
+        - txn_created_at
+        - txn_updated_at
+        - invoice_updated_at
+        - account_updated_at
+    # keep fct_transaction as your conformed spend mart (already defined)
+  auxiliary:
+    vendor_alias:
+      description: Observed vendor name variants and mapping
+      columns:
+        - canonical_vendor_id
+        - observed_name
+        - confidence
+    embeddings_text:
+      description: Vector embeddings for search and retrieval
+      columns:
+        - object_type
+        - object_id
+        - embedding
+    data_quality_issues:
+      description: Failed checks and validations
+      columns:
+        - object_type
+        - object_id
+        - check_name
+        - status
+        - details
+    xref_property_integration:
+      description: Map external property ids to internal property_id
+      columns:
+        - property_integration_id
+        - property_id
+        - source_system
+    xref_unit_integration:
+      description: Map external unit ids to internal unit_id
+      columns:
+        - unit_integration_id
+        - unit_id
+        - source_system
+    xref_account_integration:
+      description: Map external account ids to internal account_id
+      columns:
+        - account_integration_id
+        - account_id
+        - source_system
+  # small extensions to existing tables
+  facts_extensions:
+    fct_invoice:
+      add_columns:
+        - service_from
+        - service_to
+        - external_invoice_id # from receivable_invoice_detail_id when available
+    fct_transaction:
+      add_columns:
+        - source_txn_detail_integration_id
+        - source_system
+etl_pipelines:
+  - id: ingest_raw
+    steps_append:
+      - paginate_via_next_page_url
+      - strong_types_cast:
+          debit: numeric
+          credit: numeric
+          credit_debit_balance: numeric
+          posted_at: timestamp
+          txn_created_at: timestamp
+          txn_updated_at: timestamp
+          invoice_updated_at: timestamp
+          account_updated_at: timestamp
+      - derive_signed_amount: # for convenience features
+      - write_stg_gl_line
+  - id: normalize_entities
+    outputs_append:
+      - dim_party
+      - dim_project
+      - dim_financial_account
+      - xref_property_integration
+      - xref_unit_integration
+      - xref_account_integration
+    steps_append:
+      - upsert_xrefs_from_integration_ids
+      - party_resolution_from_party_name_and_type
+      - project_resolution_from_project_fields
+      - financial_account_normalization
+  - id: enrich_and_stage
+    inputs_append:
+      - fct_gl_line
+    steps_append:
+      - join_xrefs_to_internal_keys
+      - conform_property_address_fields # property_street/city/state/zip -> dim_property attrs
+  - id: ledger_auto_map
+    inputs_append:
+      - fct_gl_line
+    steps_replace:
+      - predict_account_and_property # still used for unmapped or noisy sources
+      - assign_capex_flag
+      - reconcile_to_gl_line # ensure derived fct_transaction sums to line postings
+ai_layers:
+  tabular_engine:
+    models:
+      classifiers:
+        - LightGBM
+        - CatBoost
+      tasks:
+        - account_mapping
+        - property_assignment
+        - capex_flagging
+        - duplicate_detection
+        - approval_routing
+    time_series:
+      library: Nixtla_statsforecast
+      blend_with: LightGBM_residuals
+      targets:
+        - spend_forecast
+        - cash_forecast
+    anomalies:
+      methods:
+        - IsolationForest
+        - robust_z_scores
+        - contract_aware_rules
+  language_engine:
+    base_model_options:
+      - Llama-3.1-8B
+      - Mistral-7B
+    finetune: QLoRA
+    tasks:
+      - vendor_normalization
+      - invoice_line_tagging
+      - rationale_generation
+      - natural_language_sql
+    retrieval:
+      vector_store: pgvector
+      corpus:
+        - invoices_text
+        - contracts
+        - sow_and_policies
+  operator_copilot:
+    tools:
+      - read_only_sql_templates
+      - document_search
+      - anomaly_explainer
+      - propose_journal_writer
+    guardrails:
+      - allowlist_tables
+      - row_limits
+      - cost_timeouts
+      - never_post_directly
+  fine_tuning_loop:
+    sft_data:
+      inputs:
+        - raw_desc
+        - vendor_name
+        - invoice_text
+        - property_meta
+      targets:
+        - account_id
+        - property_id
+        - capex_flag
+        - confidence
+        - rationale
+    process:
+      - start_few_shot_prompts
+      - log_corrections_2_to_4_weeks
+      - qlora_fine_tune_on_corpus
+      - evaluate_on_holdout
+      - promote_if_beats_rules_and_last_model
+    metrics:
+      - f1_account_id
+      - macro_accuracy_property_id
+controls:
+  autopost_thresholds:
+    conditions:
+      - confidence_gt: 0.98
+      - amount_lt: configurable_limit
+      - non_sensitive_accounts_only: true
+    action: post_to_ledger
+    conditions_append:
+      - gl_header_line_reconciled: true # header and sum(lines) match within epsilon
+  review_queue:
+    conditions:
+      - otherwise: true
+    action: human_review_required
+  explainability:
+    tabular:
+      - store_feature_importances
+    language:
+      - store_redacted_reasons
+  auditability:
+    version_every_change: true
+    fields:
+      - user
+      - time
+      - old_value
+      - new_value
+      - model_version
+    fields_append:
+      - source_txn_detail_integration_id
+      - source_system
+  drift_monitoring:
+    tools:
+      - Evidently
+    watch:
+      - input_schema
+      - prediction_confidence
+      - class_balance
+security_governance:
+  access_controls:
+    rls_by_property_portfolio: true
+  secrets_management: Vault
+  encryption:
+    at_rest: true
+    in_transit: true
+  pii_minimization: true
+  tokenization:
+    fields:
+      - vendor_ein
+  catalog_governance:
+    catalog: OpenMetadata
+    ownership: required
+    sla_on_critical_tables: true
+  lineage: OpenLineage
+  data_contracts:
+    gl_api_contract:
+      required_fields:
+        - txn_detail_integration_id
+        - post_date
+        - debit
+        - credit
+        - account_integration_id
+      invariants:
+        - amount_is_numeric
+        - posted_at_is_timestamp
+        - currency_in_iso4217
+      invariants_append:
+        - debit_credit_numeric
+        - one_of_debit_credit_nonzero
+        - composite_key_unique: [source_system, txn_detail_integration_id]
+timeline:
+  week_1_2:
+    deliverables:
+      - dagster_dbt_minio_clickhouse_duckdb_bootstrap
+      - gl_ingest_and_vendor_normalization_v1
+      - marts_fct_transaction_dim_vendor
+      - ops_dashboards_superset
+      - baseline_rules_mapping_and_alerts
+  week_3_4:
+    deliverables:
+      - llm_few_shot_account_mapping_pgvector
+      - donut_ocr_invoices_and_feedback_ui
+      - lightgbm_mapping_and_duplicate_detection
+      - choose_best_of_llm_vs_gbm_by_route
+  week_5_plus:
+    deliverables:
+      - accrual_proposals_and_forecasts
+      - copilot_with_guarded_sql_tools
+      - qlora_finetune_from_feedback
+      - drift_monitors_evidently
+practical_patterns:
+  vendor_canonicalization:
+    method:
+      - embeddings_plus_hdbscan
+      - human_in_the_loop_labeling
+    persistence: vendor_alias_and_dim_vendor
+  account_mapping_hybrid:
+    rules_first:
+      - contract_fixed_accounts
+      - utilities_telecom_saas_insurance_backstops
+    model_next: true
+  budgets_as_features:
+    join_last_12_months: true
+    include_current_budget_row: true
+  contracts_as_guardrails:
+    checks:
+      - exceeds_contract_ceiling
+      - outside_service_window
+tech_choices:
+  self_hosted:
+    - Dagster
+    - dbt_core
+    - MinIO
+    - ClickHouse
+    - Postgres_pgvector
+    - Feast
+    - FastAPI
+    - vLLM
+    - MLflow
+    - Superset
+    - Vault
+    - OpenMetadata
+    - GreatExpectations
+  cloud_lean:
+    object_store: S3
+    warehouse:
+      - Snowflake
+      - BigQuery
+    ocr: VertexOrAWS_Textract
+    keep_same_app_mlops_pattern: true
